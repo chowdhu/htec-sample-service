@@ -1,0 +1,52 @@
+name: Docker Image CI
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+env:
+  GITHUB_SHA: ${{ github.sha }} 
+  GITHUB_REF: ${{ github.ref }} 
+  IMAGE_NAME: backend
+  IMAGE_TAG: ${{ github.sha }} 
+  REGISTRY_HOSTNAME: gcr.io
+  PROJECT_NAME: ${{ secrets.GCP_PROJECT }}
+jobs:
+  setupbuild:
+    name: "Setup Build and package and upload"
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: 'Build the Docker image'
+      run: |-
+        export TAG=`echo $GITHUB_REF | awk -F/ '{print $NF}'`
+        echo $TAG
+        docker build . --file Dockerfile --tag "$IMAGE_NAME":"$IMAGE_TAG"
+    - id: 'auth'
+      name: 'Authenticate to Google Cloud'
+      uses: 'google-github-actions/auth@v0'
+      with:
+        credentials_json: '${{ secrets.GCR_KEY }}'
+    - name: 'Setup google Cloud SDK'
+      uses: 'google-github-actions/setup-gcloud@v0'
+    - id: 'gloud'
+      name: 'Setup docker to use gcloud auth'
+      run: |-
+        gcloud auth configure-docker
+    - id: 'tag'
+      name: 'Tag the docker image and push to gcr'
+      run: |-
+        export TAG=`echo $GITHUB_REF | awk -F/ '{print $NF}'`
+        echo $TAG
+        docker images
+        docker tag "$IMAGE_NAME":"$IMAGE_TAG" "$REGISTRY_HOSTNAME"/"$PROJECT_NAME"/"$IMAGE_NAME":"$IMAGE_TAG"
+        docker push "$REGISTRY_HOSTNAME"/"$PROJECT_NAME"/"$IMAGE_NAME":"$IMAGE_TAG"
+    - id: 'humaitec'
+      name: 'Calling Humanitec API'
+      run: |-
+        curl --request POST "https://api.humanitec.io/orgs/chowworld/artefact-versions" \
+        --header "Authorization: Bearer ${{ secrets.HUMANITEC_TOKEN}}" \
+        --header "Content-Type: application/json" \
+        --data-raw '{ "name": "'${IMAGE_NAME}'","version": "'${IMAGE_TAG}'","type": "container","commit": "'${GITHUB_SHA}'","ref": "'${GITHUB_REF}'"}'
